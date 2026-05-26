@@ -378,3 +378,80 @@ c_labels = build_compound_labels(train_herbs, n_compounds)
 - 次级创新：ECC-Adaptive+ 双轮链式预测
 - 辅助技术：knowledge_sim_loss + 数据增强（降级为非独立创新）
 - 新增"探索过但放弃的方向"章节（5 个回退尝试及原因）
+
+---
+
+## 第七轮：Drug Tower 跨域知识迁移 — 历史性突破
+
+### Drug Tower 预训练 [采纳]
+**日期**: 2026-05-21
+**新增文件**: `model_drug_tower.py`, `train_drug_tower.py`
+**数据**: Drug_Morgan.npy (1349, 1024) + Drug_Labels.npy (1349, 8)
+**架构**: DrugTower: encoder(1024→512→256) + head(256→8), 与 CompoundToxModel 同架构
+**预训练结果**: 5-Fold CV AUC=0.7388 ± 0.0090 (8类西药毒性)
+**输出**: `dataset/drug_tower_encoder.pt`
+
+### Drug Tower → TCM 跨域集成 [采纳]
+**日期**: 2026-05-21
+**改动**: 
+1. 加载冻结 Drug Tower encoder (requires_grad=False)
+2. `compute_drug_prior()`: 化合物 Morgan FP → Drug Tower encoder → drug_view [256] → Linear(256→5) → drug_prior [5]
+3. `train_drug_projection()`: 每折在训练草药上训练 drug_proj (BCE, 30 epochs)
+4. prior = compound_prior + drug_prior (相加融合)
+
+**结果** (5-Fold CV, 无泄漏):
+
+| 配置 | AUC | Macro-F1 | Micro-F1 |
+|------|-----|----------|----------|
+| Baseline (no Drug Tower) | 0.6794 | 0.6731 | 0.6849 |
+| **+ Drug Tower** | **0.7843** | **0.7440** | **0.7494** |
+| **提升** | **+10.5pp** | **+7.1pp** | **+6.5pp** |
+
+**单折**: Fold 3 AUC=0.842, Fold 4 AUC=0.884 (历史最高)
+
+**分析**: 
+- Drug Tower 在 1349 个西药上学到的 8 类毒性模式（血液毒性、耳毒性等）提供了 TCM 5 类标签中没有的分子视角
+- drug_prior 和 compound_prior 互补: compound 从 TCM 标注学（5 类），drug 从西药标注学（8 类，重叠+互补）
+- 跨域知识迁移的价值远超所有前期优化之和（Mixup +4.3pp, KnowledgeReg +2.4pp, Aggregator +0.5pp）
+- 方差增大（±0.09 vs ±0.02）: drug_proj 在小折上有过拟合风险，但整体收益压倒性
+
+**泄漏检查**: 
+- Drug Tower 训练数据与 TCM 数据零重叠 ✓
+- drug_proj 每折只用训练草药标签 ✓
+- Drug Tower encoder 冻结，无梯度 ✓
+
+**文件**: `train_compound_ecc.py` → `compute_drug_prior()`, `train_drug_projection()`, main()
+
+### 消融脚本全量同步 + 16 组消融 [采纳]
+**日期**: 2026-05-22
+**改动**: 重写 `train_ablation.py`，同步 Drug Tower / contrastive / adaptive fusion / prior2 等全部新特性。新增 8 个消融开关。
+**完整结果** (16 组, 5-Fold CV):
+
+| 配置 | AUC | vs Full |
+|------|-----|---------|
+| Full Model | 0.7821 | — |
+| - Drug Tower | 0.6836 | **-9.85pp** |
+| Drug Prior Only | 0.7856 | +0.35pp |
+| ProtoNet | 0.6768 | -10.53pp |
+| - Aggregator | 0.7841 | +0.20pp |
+| - Contrastive | 0.7836 | +0.16pp |
+| - Jaccard Reg | 0.7681 | -1.40pp |
+| - DropAdd | 0.7634 | -1.87pp |
+
+**核心洞见**: Drug Tower 主导一切，之前有效的组件（Mixup -4.3→-0.5pp, Aggregator 0.5→噪声）被大幅削弱。跨域知识迁移的价值远超所有模型内部优化之和。
+**日期**: 2026-05-22
+**补充实验**: ProtoNet 基线 (no prior), drug_prior_only
+**完整消融表**:
+
+| 配置 | AUC | 洞察 |
+|------|-----|------|
+| ProtoNet (no prior) | 0.6791 | 纯 300d 特征基线 |
+| TCM compound_prior only | 0.6794 | TCM 自蒸馏无增量 (≈基线) |
+| Drug prior only | 0.7843 | 西药知识单独追平 Full |
+| Both (hard sum) | 0.7843 | 双源 AUC 持平, F1 +0.7pp |
+| Both (adaptive fusion) | 0.7780 | 性能持平, 提供可解释性 |
+
+**核心洞见**: 
+- 数据源价值 >> 模型设计: 跨域迁移 +10.5pp, TCM 自蒸馏 +0.0pp
+- Drug Tower 太强: 单独就已达到全模型 AUC
+- 创新点2 (自适应融合) 降级: 无性能增益, 作为 1.0.1 小节保留

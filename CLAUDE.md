@@ -51,15 +51,17 @@ macro_f1_best = f1_score(labels, best_preds, average='macro')
 
 ## 已验证的设计决策
 
-### 保留
-- **Mixup (α=0.2)**: 移除后 AUC -4.3pp，不可移除
-- **Knowledge Regularization (weight=0.1)**: 移除后 AUC -2.4pp，不可移除
-- **DropAdd (drop=0.2, add=0.01)**: 移除后 AUC -1.8pp，不可移除
-- **Compound→Herb Knowledge Transfer**: 移除后 AUC -0.9pp，核心创新
-- **Attention Aggregator (multi-head, hidden=32)**: 移除后 AUC -0.5pp
-- **P2 Ensemble**: 移除后 Macro-F1 -0.9pp
-- **Label Smoothing → Mixup 顺序**: 先平滑硬标签，再 mixup
-- **Compound 全量训练无 val split**: 75 样本上的 macro-AUC 误差太大，固定 40 epochs
+### 保留 (Drug Tower 时代, 2026-05-22 消融更新)
+- **Drug Tower 跨域迁移**: 移除后 AUC -9.9pp, drug_prior alone >= Full Model, **绝对主导**
+- **DropAdd 非对称增强**: 移除后 AUC -1.9pp, 第二重要, Drug Tower 时代仍关键
+- **Jaccard 嵌入正则**: 移除后 AUC -1.4pp, 第三重要
+- **Mixup (α=0.2)**: Drug Tower 时代从 -4.3pp 缩到 -0.5pp, 保留但重要度下降
+- **Knowledge Regularization (weight=0.1)**: 之前 -2.4pp, Drug Tower 时代 -1.4pp
+
+### 噪声级 (Drug Tower 时代, |Δ| < 0.5pp)
+- **TCM compound_prior (自蒸馏)**: 对 AUC 无增量, 对 F1 微弱校准
+- **Aggregator, Contrastive, Smooth Order, P2, Compound Opt**: 均在噪声范围内, Drug Tower 主导下无显著贡献
+- **Adaptive dual-prior fusion**: 无增量, 已降级
 
 ### 已证无效/可简化
 - **MI×AUC vs MI Only 链排序**: 等价，standalone_aucs 可安全移除

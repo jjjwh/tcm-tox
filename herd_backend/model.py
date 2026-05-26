@@ -45,14 +45,10 @@ class ProtoNet(nn.Module):
 
 class GatedPriorProtoNet(nn.Module):
     """
-    ProtoNet + Gated Prior Injection (残差门控).
-    prior 走独立门控路径，以残差方式注入 encoder 的 256 维表示。
-    不改变 proj 层维度，不影响 prototype 空间。
-    最坏情况 gate→0 → h=h → 等价基线。
-
-    Design choice: gate只看prior不看features.
-    在小数据(252样本)下, context-aware gate (261→128) 引入33K参数导致过拟合,
-    简单设计 Linear(5→20→256)=100参数 在小数据上更稳定.
+    ProtoNet + Gated Prior Injection with Adaptive Dual-Prior Fusion.
+    When prior2 is provided, a lightweight fusion gate learns per-label per-sample
+    weights to combine prior and prior2, conditioned on encoder features.
+    Design: fusion gate 266→32→5 (8.7K params), parameter-efficient for small data.
     """
     def __init__(self, feat_dim=300, prior_dim=5, proj_dim=64):
         super().__init__()
@@ -69,26 +65,50 @@ class GatedPriorProtoNet(nn.Module):
             nn.Linear(prior_dim * 4, 256),
             nn.Sigmoid(),
         )
-        # 初始偏置 = 0 → sigmoid(0) ≈ 0.5，训练初期信任一半先验
         nn.init.zeros_(self.gate[-2].bias)
+
+        # Dual-prior fusion gate: context-aware, parameter-efficient
+        self.fusion_gate = nn.Sequential(
+            nn.Linear(256 + prior_dim * 2, 32), nn.ReLU(),
+            nn.Linear(32, prior_dim),
+            nn.Sigmoid(),
+        )
+        # init bias → sigmoid(0)=0.5, equal trust in both priors initially
+        nn.init.zeros_(self.fusion_gate[-2].bias)
+
+        # Knowledge view encoder: projects combined prior to embedding for cross-view alignment
+        self.know_encoder = nn.Sequential(
+            nn.Linear(prior_dim * 2, 64), nn.ReLU(),
+            nn.Linear(64, proj_dim),
+        )
 
         self.proj = nn.Linear(256, proj_dim)
         self.proto_pos = nn.Parameter(torch.randn(proj_dim) * 0.1)
         self.proto_neg = nn.Parameter(torch.randn(proj_dim) * 0.1)
         self.scale = nn.Parameter(torch.tensor(10.0))
 
-    def forward(self, x, prior=None, return_proj=False):
+    def forward(self, x, prior=None, prior2=None, return_proj=False):
         h = self.encoder(x)
+        z_know = None
         if prior is not None:
-            gate_val = self.gate(prior)
-            prior_emb = self.prior_proj(prior)
+            if prior2 is not None:
+                # Adaptive fusion: learn per-label trust based on context
+                fusion_w = self.fusion_gate(torch.cat([h, prior, prior2], dim=1))
+                prior_fused = fusion_w * prior + (1 - fusion_w) * prior2
+                know_input = torch.cat([prior, prior2], dim=1)
+            else:
+                prior_fused = prior
+                know_input = torch.cat([prior_fused, prior_fused], dim=1)
+            gate_val = self.gate(prior_fused)
+            prior_emb = self.prior_proj(prior_fused)
             h = h + gate_val * prior_emb
+            z_know = F.normalize(self.know_encoder(know_input), dim=1)
         z = F.normalize(self.proj(h), dim=1)
         pp = F.normalize(self.proto_pos.unsqueeze(0), dim=1)
         pn = F.normalize(self.proto_neg.unsqueeze(0), dim=1)
         logit = self.scale * ((z * pp).sum(1, keepdim=True) - (z * pn).sum(1, keepdim=True))
         if return_proj:
-            return logit, z
+            return logit, z, z_know
         return logit
 
 

@@ -351,7 +351,7 @@ def main():
     for i, d in enumerate(all_data):
         for cid in d["compound_ids"]:
             if cid < n_compounds: compound_mh[i, cid] = 1.0
-    compound_fps = np.load(os.path.join(BASE, "..", "数据爬取", "compound_fps.npy"))
+    compound_fps = np.load(os.path.join(BASE, "dataset", "compound_fps.npy"))
     label_strs = [''.join(str(int(v)) for v in d['label']) for d in all_data]
 
     # Load frozen Drug Tower for cross-domain prior

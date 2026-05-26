@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python train_compound_ecc.py)",
+      "Bash(python -c ' *)",
+      "Bash(python train_drug_tower.py)"
+    ]
+  }
+}
